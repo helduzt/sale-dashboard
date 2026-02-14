@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import glob
 
-# --- 1. Config หน้าเว็บ ---
+# --- 1. Config หน้าเว็บ (ต้องอยู่บรรทัดแรกสุด ห้ามย้าย) ---
 st.set_page_config(
     page_title="PharmaSales Dashboard",
     page_icon="💊",
@@ -10,26 +10,21 @@ st.set_page_config(
 )
 
 # ==========================================
-# 🔐 ส่วนจัดการระบบ Login
+# 🔐 ส่วนจัดการระบบ Login (แก้ไขใหม่: เสถียรขึ้น)
 # ==========================================
 
+# รหัสผ่านที่ถูกต้อง
 VALID_PASSWORDS = ["wrd022026", "onn022026"]
 
+# ตรวจสอบสถานะการล็อกอิน
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
-def check_login():
-    input_pass = st.session_state.get("password_input", "")
-    if input_pass in VALID_PASSWORDS:
-        st.session_state['logged_in'] = True
-        st.session_state["password_input"] = ""
-    else:
-        st.error("❌ รหัสผ่านไม่ถูกต้อง")
-
+# ถ้ายังไม่ล็อกอิน ให้แสดงหน้า Login
 if not st.session_state['logged_in']:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown(
             """
             <div style="background-color: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;">
@@ -41,18 +36,23 @@ if not st.session_state['logged_in']:
         )
         st.markdown("<br>", unsafe_allow_html=True)
         
+        # ใช้ Form แบบง่าย (ตัด Logic ซับซ้อนออก)
         with st.form("login_form"):
-            st.text_input("Password", type="password", key="password_input")
-            submit = st.form_submit_button("เข้าสู่ระบบ", use_container_width=True, type="primary")
+            password = st.text_input("Password", type="password")
+            submit_button = st.form_submit_button("เข้าสู่ระบบ", use_container_width=True, type="primary")
             
-            if submit:
-                check_login()
-                if st.session_state['logged_in']:
-                    st.rerun()
-    st.stop()
+            if submit_button:
+                if password in VALID_PASSWORDS:
+                    st.session_state['logged_in'] = True
+                    st.rerun() # รีโหลดหน้าทันทีเมื่อรหัสถูก
+                else:
+                    st.error("❌ รหัสผ่านไม่ถูกต้อง")
+    
+    st.stop() # 🛑 หยุดการทำงานส่วนอื่นจนกว่าจะล็อกอินผ่าน
 
 # ==========================================
 # 📊 ส่วนโปรแกรมหลัก (Dashboard)
+# (ทำงานเมื่อ logged_in = True เท่านั้น)
 # ==========================================
 
 # --- ฟังก์ชันโหลดข้อมูล ---
@@ -132,17 +132,16 @@ if selected_customer_id and df is not None:
     cust_df = df[df['Search_ID'] == selected_customer_id]
     info = cust_df.iloc[0]
     
-    # 1. คำนวณยอด
+    # คำนวณยอด
     total_spend = cust_df[col_map['AMOUNT']].sum()
     total_items = cust_df[col_map['QTY']].sum()
     top_cat = cust_df[col_map['GROUP']].mode()[0] if col_map['GROUP'] in cust_df else "-"
     
-    # 2. หาข้อมูลสาขา (แก้ไขใหม่: ดึงทุกสาขาที่ไม่ซ้ำ)
+    # แสดงสาขาทั้งหมด
     unique_branches = cust_df[col_map['BRANCH']].unique()
-    # แปลงเป็น string คั่นด้วยลูกน้ำ (ตัดค่าว่างทิ้ง)
     branch_display = ", ".join([str(b) for b in unique_branches if pd.notna(b)])
 
-    # 3. แสดงผล Header
+    # Header
     st.title(info['Search_Name'])
     st.markdown(f"**สมาชิก:** `{selected_customer_id}`  |  **สาขา:** `{branch_display}`")
     
@@ -158,7 +157,6 @@ if selected_customer_id and df is not None:
 
     # --- Tab 1: แบบสรุป ---
     with tab1:
-        # Group รวมยอด
         summary_df = cust_df.groupby(
             [col_map['SKU'], col_map['ITEM'], col_map['UNIT'], col_map['GROUP']]
         ).agg(
@@ -188,46 +186,4 @@ if selected_customer_id and df is not None:
                 "Total_Qty": st.column_config.NumberColumn("จำนวนรวม", format="%d"),
                 col_map['UNIT']: st.column_config.TextColumn("หน่วย", width="small"),
                 "Total_Amount": st.column_config.ProgressColumn(
-                    "ยอดเงินรวม", 
-                    format="฿%.2f",
-                    min_value=0,
-                    max_value=int(summary_df['Total_Amount'].max())
-                ),
-                "Avg_Price": st.column_config.NumberColumn("ราคาเฉลี่ย", format="฿%.2f"),
-                col_map['GROUP']: "หมวดหมู่",
-            },
-            use_container_width=True,
-            hide_index=True,
-            height=500
-        )
-
-    # --- Tab 2: แบบละเอียด ---
-    with tab2:
-        detail_cols = [
-            col_map['SKU'], 
-            col_map['ITEM'], 
-            col_map['GROUP'], 
-            col_map['QTY'], 
-            col_map['UNIT'], 
-            col_map['PRICE'], 
-            col_map['AMOUNT']
-        ]
-        detail_df = cust_df[detail_cols]
-        
-        st.dataframe(
-            detail_df,
-            column_config={
-                col_map['SKU']: st.column_config.TextColumn("SKU", width="small"),
-                col_map['ITEM']: "สินค้า",
-                col_map['GROUP']: "หมวดหมู่",
-                col_map['QTY']: st.column_config.NumberColumn("จำนวน", format="%d"),
-                col_map['UNIT']: "หน่วย",
-                col_map['PRICE']: st.column_config.NumberColumn("ราคา/หน่วย", format="฿%.2f"),
-                col_map['AMOUNT']: st.column_config.NumberColumn("รวม", format="฿%.2f"),
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-
-else:
-    st.info("👈 กรุณาค้นหารายชื่อจากเมนูด้านซ้าย")
+                    "ยอดเงินรวม",
