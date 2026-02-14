@@ -1,132 +1,141 @@
 import streamlit as st
 import pandas as pd
-import os
 
-# 1. ตั้งค่าหน้าเว็บ
-st.set_page_config(page_title="ระบบค้นหาลูกค้า", layout="wide")
+# --- 1. ตั้งค่าหน้าเว็บ ---
+st.set_page_config(page_title="ระบบค้นหาลูกค้า", layout="wide", page_icon="📂")
 
-# 2. ฟังก์ชันโหลดไฟล์ที่ทนทานที่สุด
+# CSS ตกแต่งให้สวยงาม
+st.markdown("""
+<style>
+    .stApp { background-color: #f0f2f6; }
+    div[data-testid="stMetricValue"] { font-size: 20px; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 2. ส่วนหัวและตัวอัปโหลดไฟล์ ---
+st.title("📂 ระบบค้นหาประวัติการซื้อ (แบบอัปโหลดเอง)")
+st.markdown("---")
+
+# สร้างปุ่มอัปโหลดไฟล์ตรงนี้ (รองรับทั้ง CSV และ Excel)
+uploaded_file = st.file_uploader("1. กรุณาลากไฟล์ข้อมูล (CSV หรือ Excel) มาวางที่นี่", type=['csv', 'xlsx', 'xls'])
+
+# --- 3. ฟังก์ชันโหลดข้อมูล ---
 @st.cache_data
-def load_data():
-    file_path = "data.csv" # เปลี่ยนชื่อไฟล์ให้ง่าย
-    
-    # 2.1 เช็คว่ามีไฟล์ไหม
-    if not os.path.exists(file_path):
-        return None, f"❌ หาไฟล์ '{file_path}' ไม่เจอ! กรุณาเปลี่ยนชื่อไฟล์จริงเป็น data.csv แล้ววางไว้ที่เดียวกับ app.py"
-
+def load_data(file):
     df = None
-    success_msg = ""
-    
-    # 2.2 ลองอ่านด้วย 3 รหัสภาษาไทยยอดฮิต
-    encodings = ['utf-8', 'cp874', 'tis-620', 'utf-16']
-    
-    for enc in encodings:
-        try:
-            # ลองอ่านแบบ CSV
-            temp_df = pd.read_csv(file_path, encoding=enc)
-            
-            # เช็คว่าอ่านรู้เรื่องไหม (ต้องมี column ที่ชื่อมีคำว่า 'PERSON' หรือ 'NAME')
-            cols = "".join(temp_df.columns).upper()
-            if "PERSON" in cols or "NAME" in cols or "ITEM" in cols:
-                df = temp_df
-                success_msg = f"อ่านไฟล์สำเร็จด้วยรหัส: {enc}"
+    # ถ้าเป็นไฟล์ CSV
+    if file.name.lower().endswith('.csv'):
+        # ลองอ่านทีละภาษา (กันภาษาต่างดาว)
+        encodings = ['utf-8', 'cp874', 'tis-620', 'utf-16']
+        for enc in encodings:
+            try:
+                file.seek(0) # รีเซ็ตไฟล์ไปที่จุดเริ่มต้น
+                df = pd.read_csv(file, encoding=enc)
                 break
-        except:
-            continue
-            
-    # 2.3 ถ้าอ่าน CSV ไม่ได้ ลองอ่านแบบ Excel (เผื่อเป็นไฟล์ Excel ปลอมตัวมา)
-    if df is None:
+            except:
+                continue
+                
+    # ถ้าเป็นไฟล์ Excel
+    else:
         try:
-            df = pd.read_excel(file_path)
-            success_msg = "อ่านไฟล์สำเร็จแบบ Excel"
-        except:
-            pass
+            df = pd.read_excel(file)
+        except Exception as e:
+            st.error(f"อ่านไฟล์ Excel ไม่ได้: {e}")
+            return None
 
-    # ถ้ายังไม่ได้อีก ยอมแพ้
     if df is None:
-        return None, "❌ อ่านไฟล์ไม่ได้เลย กรุณาลองเปิดไฟล์ด้วย Excel แล้ว Save As เป็น 'CSV UTF-8'"
+        return None
 
-    # 3. จัดการข้อมูล (Cleaning)
+    # --- Clean Data ---
     try:
         # ลบช่องว่างชื่อ Column
         df.columns = df.columns.str.strip()
         
-        # แปลงชื่อ Column ให้เป็นมาตรฐาน (เผื่อชื่อไม่ตรงเป๊ะ)
-        # เช่น Person ID -> PERSONID
-        df.columns = df.columns.str.upper().str.replace(' ', '').str.replace('_', '')
+        # แปลงเบอร์โทร (PERSONID) ให้เป็นข้อความ
+        # หา column ที่น่าจะเป็นเบอร์โทร (ที่มีคำว่า ID หรือ PERSON)
+        id_col = [c for c in df.columns if 'PERSON' in c or 'ID' in c][0]
+        df['Search_ID'] = df[id_col].astype(str).str.replace(r'[^0-9]', '', regex=True)
         
-        # หาชื่อ Column จริงๆ ในไฟล์ที่โหลดมา
-        col_map = {
-            'ID': [c for c in df.columns if 'PERSON' in c or 'TEL' in c or 'ID' in c][0], # เดาว่าช่องไหนคือ ID
-            'NAME': [c for c in df.columns if 'FNAME' in c or 'NAME' in c][0],
-            'ITEM': [c for c in df.columns if 'ITEMNAME' in c or 'PRODUCT' in c][0],
-            'AMOUNT': [c for c in df.columns if 'AMOUNT' in c or 'PRICE' in c or 'TOTAL' in c][-1] # เอาอันหลังสุดมักจะเป็นราคารวม
-        }
+        # หา column ชื่อ (FNAME)
+        name_col = [c for c in df.columns if 'NAME' in c or 'FNAME' in c][0]
+        df['Search_Name'] = df[name_col].astype(str).fillna('')
         
-        # เก็บ Column ที่จะใช้
-        df['Display_ID'] = df[col_map['ID']].astype(str).str.replace(r'\.0$', '', regex=True) # ลบ .0 ทิ้ง
-        df['Display_Name'] = df[col_map['NAME']].astype(str)
-        df['Display_Item'] = df[col_map['ITEM']].astype(str)
-        df['Display_Amount'] = pd.to_numeric(df[col_map['AMOUNT']].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-        
-        # แถม Column อื่นๆ ถ้ามี
-        if 'CFUNITNAME' in df.columns: df['Display_Unit'] = df['CFUNITNAME']
-        else: df['Display_Unit'] = ""
-            
-        if 'BASEQUANTITY' in df.columns: df['Display_Qty'] = df['BASEQUANTITY']
-        else: df['Display_Qty'] = 0
+        # รวมชื่อนามสกุล (ถ้ามี LNAME)
+        lname_col = [c for c in df.columns if 'LNAME' in c]
+        if lname_col:
+            df['Search_Name'] += ' ' + df[lname_col[0]].astype(str).fillna('')
 
     except Exception as e:
-        return None, f"❌ ข้อมูลในไฟล์ไม่ตรงรูปแบบ: {e}\nColumn ที่เจอ: {list(df.columns)}"
+        st.error(f"❌ รูปแบบไฟล์ไม่ถูกต้อง: {e}")
+        return None
 
-    return df, success_msg
+    return df
 
-# --- เริ่มรัน ---
-df, msg = load_data()
-
-if df is None:
-    st.error(msg)
-    st.stop()
-
-# --- ส่วนแสดงผล ---
-st.title("🔎 ค้นหาประวัติการซื้อ")
-st.caption(msg) # บอก User ว่าโหลดไฟล์แบบไหนมา
-
-search = st.text_input("พิมพ์ชื่อ หรือ เบอร์โทรลูกค้า", placeholder="เช่น 081...")
-
-if search:
-    # กรองข้อมูล
-    results = df[
-        df['Display_ID'].str.contains(search, na=False) | 
-        df['Display_Name'].str.contains(search, na=False) 
-    ]
+# --- 4. การทำงานหลัก ---
+if uploaded_file is not None:
+    # โหลดข้อมูล
+    df = load_data(uploaded_file)
     
-    if not results.empty:
-        # สรุปรายชื่อคนที่ไม่ซ้ำ
-        people = results[['Display_ID', 'Display_Name']].drop_duplicates()
+    if df is not None:
+        st.success(f"✅ โหลดข้อมูลสำเร็จ! พบ {len(df):,} รายการ")
         
-        st.write(f"พบ {len(people)} คน:")
+        # แบ่งหน้าจอ ซ้าย(ค้นหา) ขวา(แสดงผล)
+        col1, col2 = st.columns([1, 2])
         
-        for i, person in people.iterrows():
-            with st.expander(f"👤 {person['Display_Name']} (เบอร์: {person['Display_ID']})"):
-                # ดึงข้อมูลการซื้อของคนนี้
-                history = df[df['Display_ID'] == person['Display_ID']]
+        with col1:
+            st.subheader("🔍 2. ค้นหาลูกค้า")
+            search_text = st.text_input("พิมพ์ชื่อ หรือ เบอร์โทร", placeholder="เช่น 081...")
+            
+            selected_person = None
+            
+            if search_text:
+                # กรองข้อมูล
+                mask = (df['Search_ID'].str.contains(search_text, na=False)) | \
+                       (df['Search_Name'].str.contains(search_text, na=False))
+                results = df[mask]
                 
-                # แสดงยอดรวม
-                total = history['Display_Amount'].sum()
-                st.metric("ยอดซื้อรวมทั้งหมด", f"฿{total:,.2f}")
+                # เอารายชื่อที่ไม่ซ้ำมาแสดง
+                people = results[['Search_ID', 'Search_Name']].drop_duplicates()
+                
+                if not people.empty:
+                    st.info(f"พบ {len(people)} คน")
+                    # สร้าง Radio Button ให้เลือก
+                    choice = st.radio(
+                        "ผลการค้นหา (คลิกเพื่อดูข้อมูล)",
+                        people.apply(lambda x: f"{x['Search_Name']} ({x['Search_ID']})", axis=1)
+                    )
+                    # แกะ ID จากตัวเลือก
+                    selected_id = choice.split('(')[-1].replace(')', '')
+                    selected_person = selected_id
+                else:
+                    st.warning("ไม่พบข้อมูล")
+
+        with col2:
+            st.subheader("📊 3. ประวัติการซื้อ")
+            
+            if selected_person:
+                # ดึงข้อมูลคนนั้น
+                history = df[df['Search_ID'] == selected_person]
+                
+                # แสดงข้อมูลส่วนตัว
+                info = history.iloc[0]
+                st.markdown(f"**ลูกค้า:** {info['Search_Name']}")
+                st.markdown(f"**เบอร์:** {selected_person}")
+                
+                # คำนวณยอดรวม (หา column ที่เป็นตัวเลขยอดเงิน)
+                amount_col = [c for c in df.columns if 'AMOUNT' in c or 'PRICE' in c or 'TOTAL' in c]
+                if amount_col:
+                    total = history[amount_col[-1]].sum()
+                    st.metric("💰 ยอดซื้อรวมทั้งหมด", f"฿{total:,.2f}")
                 
                 # แสดงตาราง
-                st.dataframe(
-                    history[['Display_Item', 'Display_Qty', 'Display_Unit', 'Display_Amount']],
-                    column_config={
-                        "Display_Item": "สินค้า",
-                        "Display_Qty": "จำนวน",
-                        "Display_Unit": "หน่วย",
-                        "Display_Amount": "ราคา"
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.dataframe(history, use_container_width=True)
+            else:
+                st.info("👈 กรุณาเลือกรายชื่อลูกค้าจากด้านซ้าย")
+
     else:
-        st.warning("ไม่พบข้อมูล")
+        st.error("อ่านไฟล์ไม่สำเร็จ ลอง Save ไฟล์เป็น CSV (UTF-8) แล้วอัปโหลดใหม่ครับ")
+
+else:
+    # ตอนยังไม่อัปโหลดไฟล์
+    st.info("👆 กรุณาอัปโหลดไฟล์ข้อมูลเพื่อเริ่มต้น")
