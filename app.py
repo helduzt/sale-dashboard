@@ -36,7 +36,7 @@ def load_data():
         # Mapping Column
         col_map = {
             'ID': 'PERSONID', 'FNAME': 'FNAME', 'LNAME': 'LNAME',
-            'BRANCH': 'NAME', 'ITEM': 'ITEMNAME', 'SKU': 'ITEMID', # เพิ่ม Mapping SKU
+            'BRANCH': 'NAME', 'ITEM': 'ITEMNAME', 'SKU': 'ITEMID',
             'QTY': 'BASEQUANTITY', 'PRICE': 'PRICE', 'AMOUNT': 'AMOUNT',
             'GROUP': 'CF_ITEMGROUPL1_GROUPNAME', 'UNIT': 'CF_UNITNAME'
         }
@@ -99,7 +99,7 @@ if selected_customer_id and df is not None:
     
     tab1, tab2 = st.tabs(["📊 สรุปรายการยอดนิยม (Grouped)", "📝 ประวัติละเอียด (All Logs)"])
 
-    # --- Tab 1: แบบสรุป (แก้ไขตามสั่ง) ---
+    # --- Tab 1: แบบสรุป (แก้ไขลำดับ Column) ---
     with tab1:
         # Group รวมยอด
         summary_df = cust_df.groupby(
@@ -113,12 +113,12 @@ if selected_customer_id and df is not None:
         # เรียงตามยอดเงิน
         summary_df = summary_df.sort_values(by='Total_Amount', ascending=False)
         
-        # จัดลำดับ Column ใหม่: SKU / สินค้า / หน่วย / จำนวนรวม / ยอดเงินรวม / ราคาเฉลี่ย / หมวดหมู่
+        # จัดลำดับ Column ใหม่: SKU / สินค้า / จำนวนรวม / หน่วย / ยอดเงินรวม / ราคาเฉลี่ย / หมวดหมู่
         summary_df = summary_df[[
             col_map['SKU'], 
             col_map['ITEM'], 
-            col_map['UNIT'], 
-            'Total_Qty', 
+            'Total_Qty',    # <--- สลับมาไว้ตรงนี้
+            col_map['UNIT'], # <--- ย้ายหน่วยไปไว้หลังจำนวน
             'Total_Amount', 
             'Avg_Price', 
             col_map['GROUP']
@@ -129,8 +129,8 @@ if selected_customer_id and df is not None:
             column_config={
                 col_map['SKU']: st.column_config.TextColumn("SKU", width="small"),
                 col_map['ITEM']: "สินค้า",
-                col_map['UNIT']: st.column_config.TextColumn("หน่วย", width="small"),
                 "Total_Qty": st.column_config.NumberColumn("จำนวนรวม", format="%d"),
+                col_map['UNIT']: st.column_config.TextColumn("หน่วย", width="small"),
                 "Total_Amount": st.column_config.ProgressColumn(
                     "ยอดเงินรวม", 
                     format="฿%.2f",
@@ -145,9 +145,8 @@ if selected_customer_id and df is not None:
             height=500
         )
 
-    # --- Tab 2: แบบละเอียด (แก้ไขตามสั่ง) ---
+    # --- Tab 2: แบบละเอียด ---
     with tab2:
-        # เพิ่ม SKU เป็น Column แรก
         detail_cols = [
             col_map['SKU'], 
             col_map['ITEM'], 
