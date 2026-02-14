@@ -9,22 +9,19 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. ฟังก์ชันโหลดข้อมูล (ตัวเดิมที่ทำงานดีแล้ว) ---
+# --- 2. ฟังก์ชันโหลดข้อมูล ---
 @st.cache_data
 def load_data():
     files = glob.glob("*.xlsx") + glob.glob("*.XLSX") + glob.glob("*.csv")
     if not files:
         return None, "❌ ไม่พบไฟล์ข้อมูล (.xlsx หรือ .csv) ใน GitHub Repository นี้"
     
-    # พยายามอ่านไฟล์แรกที่เจอ
     target_file = files[0]
     df = None
     
     try:
-        # อ่าน Excel
         if target_file.lower().endswith(('.xlsx', '.xls')):
             df = pd.read_excel(target_file, engine='openpyxl')
-        # อ่าน CSV
         else:
             for enc in ['utf-8', 'cp874', 'tis-620']:
                 try:
@@ -34,25 +31,17 @@ def load_data():
         
         if df is None: return None, "อ่านไฟล์ไม่ได้", target_file
 
-        # Clean Data
         df.columns = df.columns.str.strip() 
         
         # Mapping Column
         col_map = {
             'ID': 'PERSONID', 'FNAME': 'FNAME', 'LNAME': 'LNAME',
-            'BRANCH': 'NAME', 'ITEM': 'ITEMNAME', 'QTY': 'BASEQUANTITY',
-            'PRICE': 'PRICE', 'AMOUNT': 'AMOUNT',
+            'BRANCH': 'NAME', 'ITEM': 'ITEMNAME', 'SKU': 'ITEMID', # เพิ่ม Mapping SKU
+            'QTY': 'BASEQUANTITY', 'PRICE': 'PRICE', 'AMOUNT': 'AMOUNT',
             'GROUP': 'CF_ITEMGROUPL1_GROUPNAME', 'UNIT': 'CF_UNITNAME'
         }
         
-        # Check Columns
-        if col_map['ID'] not in df.columns:
-            # Fallback logic for column names matching
-            pass # (Simple version assumes mapping matches)
-
-        # Create Search Columns
         df['Search_ID'] = df[col_map['ID']].astype(str).str.replace(r'[^0-9]', '', regex=True)
-        
         f = df[col_map['FNAME']].fillna('').astype(str)
         l = df[col_map['LNAME']].fillna('').astype(str)
         df['Search_Name'] = f + ' ' + l
@@ -64,7 +53,7 @@ def load_data():
 
 df, col_map, filename = load_data()
 
-# --- 3. Sidebar (ค้นหา) ---
+# --- 3. Sidebar ---
 with st.sidebar:
     st.title("💊 Pharma Lookup")
     st.caption(f"File: {filename}")
@@ -86,20 +75,17 @@ with st.sidebar:
         else:
             st.warning("ไม่พบข้อมูล")
 
-# --- 4. Main Content (ส่วนที่ปรับปรุงใหม่) ---
+# --- 4. Main Content ---
 
 if selected_customer_id and df is not None:
-    # กรองข้อมูล
     cust_df = df[df['Search_ID'] == selected_customer_id]
     info = cust_df.iloc[0]
     
-    # คำนวณยอดรวม
     total_spend = cust_df[col_map['AMOUNT']].sum()
     total_items = cust_df[col_map['QTY']].sum()
     top_cat = cust_df[col_map['GROUP']].mode()[0] if col_map['GROUP'] in cust_df else "-"
     branch = info[col_map['BRANCH']]
 
-    # 4.1 Header & Metrics
     st.title(info['Search_Name'])
     st.markdown(f"**สมาชิก:** `{selected_customer_id}`  |  **สาขา:** `{branch}`")
     
@@ -109,57 +95,74 @@ if selected_customer_id and df is not None:
     m3.metric("🏆 หมวดหมู่หลัก", str(top_cat)[:20])
 
     st.markdown("---")
-
-    # 4.2 Purchase History (ปรับปรุงใหม่!)
     st.subheader("🛒 รายการสินค้าที่สั่งซื้อ")
     
     tab1, tab2 = st.tabs(["📊 สรุปรายการยอดนิยม (Grouped)", "📝 ประวัติละเอียด (All Logs)"])
 
-    # --- Tab 1: แบบสรุป (รวมยอดสินค้าเดียวกัน) ---
+    # --- Tab 1: แบบสรุป (แก้ไขตามสั่ง) ---
     with tab1:
-        # Group by ชื่อสินค้า + หน่วย + หมวดหมู่
+        # Group รวมยอด
         summary_df = cust_df.groupby(
-            [col_map['ITEM'], col_map['UNIT'], col_map['GROUP']]
+            [col_map['SKU'], col_map['ITEM'], col_map['UNIT'], col_map['GROUP']]
         ).agg(
             Total_Qty=(col_map['QTY'], 'sum'),
             Total_Amount=(col_map['AMOUNT'], 'sum'),
             Avg_Price=(col_map['PRICE'], 'mean')
         ).reset_index()
         
-        # Sort เอาของแพงสุดขึ้นก่อน
+        # เรียงตามยอดเงิน
         summary_df = summary_df.sort_values(by='Total_Amount', ascending=False)
+        
+        # จัดลำดับ Column ใหม่: SKU / สินค้า / หน่วย / จำนวนรวม / ยอดเงินรวม / ราคาเฉลี่ย / หมวดหมู่
+        summary_df = summary_df[[
+            col_map['SKU'], 
+            col_map['ITEM'], 
+            col_map['UNIT'], 
+            'Total_Qty', 
+            'Total_Amount', 
+            'Avg_Price', 
+            col_map['GROUP']
+        ]]
 
         st.dataframe(
             summary_df,
             column_config={
+                col_map['SKU']: st.column_config.TextColumn("SKU", width="small"),
                 col_map['ITEM']: "สินค้า",
-                col_map['GROUP']: "หมวดหมู่",
-                col_map['UNIT']: "หน่วย",
+                col_map['UNIT']: st.column_config.TextColumn("หน่วย", width="small"),
                 "Total_Qty": st.column_config.NumberColumn("จำนวนรวม", format="%d"),
-                "Avg_Price": st.column_config.NumberColumn("ราคาเฉลี่ย", format="฿%.2f"),
                 "Total_Amount": st.column_config.ProgressColumn(
                     "ยอดเงินรวม", 
                     format="฿%.2f",
                     min_value=0,
                     max_value=int(summary_df['Total_Amount'].max())
                 ),
+                "Avg_Price": st.column_config.NumberColumn("ราคาเฉลี่ย", format="฿%.2f"),
+                col_map['GROUP']: "หมวดหมู่",
             },
             use_container_width=True,
             hide_index=True,
             height=500
         )
 
-    # --- Tab 2: แบบละเอียด (รายการดิบ) ---
+    # --- Tab 2: แบบละเอียด (แก้ไขตามสั่ง) ---
     with tab2:
-        # เลือก Column ที่จะโชว์
-        detail_df = cust_df[[
-            col_map['ITEM'], col_map['GROUP'], col_map['QTY'], 
-            col_map['UNIT'], col_map['PRICE'], col_map['AMOUNT']
-        ]]
+        # เพิ่ม SKU เป็น Column แรก
+        detail_cols = [
+            col_map['SKU'], 
+            col_map['ITEM'], 
+            col_map['GROUP'], 
+            col_map['QTY'], 
+            col_map['UNIT'], 
+            col_map['PRICE'], 
+            col_map['AMOUNT']
+        ]
+        detail_df = cust_df[detail_cols]
         
         st.dataframe(
             detail_df,
             column_config={
+                col_map['SKU']: st.column_config.TextColumn("SKU", width="small"),
                 col_map['ITEM']: "สินค้า",
                 col_map['GROUP']: "หมวดหมู่",
                 col_map['QTY']: st.column_config.NumberColumn("จำนวน", format="%d"),
@@ -172,9 +175,4 @@ if selected_customer_id and df is not None:
         )
 
 else:
-    # หน้า Welcome
     st.info("👈 กรุณาค้นหารายชื่อจากเมนูด้านซ้าย")
-    if df is not None:
-        c1, c2 = st.columns(2)
-        c1.metric("ฐานข้อมูลลูกค้า", f"{df['Search_ID'].nunique():,} คน")
-        c2.metric("จำนวน Transaction", f"{len(df):,} รายการ")
