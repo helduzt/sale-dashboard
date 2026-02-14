@@ -1,55 +1,81 @@
 import streamlit as st
 import pandas as pd
 import os
+import glob
 
 # --- 1. ตั้งค่าหน้าเว็บ ---
 st.set_page_config(page_title="PharmaSales Dashboard", layout="wide", page_icon="💊")
 
-# --- 2. ฟังก์ชันโหลดข้อมูล (รองรับไฟล์ XLSX ของคุณ) ---
+# --- 2. ฟังก์ชันค้นหาและโหลดไฟล์อัตโนมัติ ---
 @st.cache_data
 def load_data():
-    # ระบุชื่อไฟล์ของคุณตรงนี้
-    file_path = "bkk 11.2025 - 02.2026.XLSX"
+    # ค้นหาไฟล์ทั้งหมดที่เป็น .csv หรือ .xlsx ในโฟลเดอร์ปัจจุบัน
+    possible_files = glob.glob("*.csv") + glob.glob("*.xlsx") + glob.glob("*.XLSX")
     
-    if not os.path.exists(file_path):
-        return None, f"❌ หาไฟล์ไม่เจอ! กรุณาตรวจสอบว่าไฟล์ชื่อ '{file_path}' อยู่ในโฟลเดอร์เดียวกับ app.py หรือไม่"
+    if not possible_files:
+        return None, "❌ ไม่พบไฟล์ข้อมูล (CSV หรือ Excel) ในโฟลเดอร์นี้เลย กรุณาวางไฟล์ข้อมูลไว้ที่เดียวกับ app.py"
 
     df = None
+    loaded_file = ""
     error_log = ""
 
-    # ความพยายามที่ 1: อ่านแบบ Excel (มาตรฐานของ .XLSX)
-    try:
-        df = pd.read_excel(file_path, engine='openpyxl')
-    except Exception as e_excel:
-        error_log += f"Read Excel failed: {e_excel}\n"
-        
-        # ความพยายามที่ 2: อ่านแบบ CSV (เผื่อเป็นไฟล์ Text ที่ตั้งชื่อเป็น .XLSX)
+    # ลองอ่านทีละไฟล์ที่เจอ
+    for file_path in possible_files:
         try:
-            df = pd.read_csv(file_path)
-        except Exception as e_csv:
-            error_log += f"Read CSV failed: {e_csv}\n"
+            # ถ้าลงท้ายด้วย .csv หรือ .CSV
+            if file_path.lower().endswith('.csv'):
+                # ลองอ่านด้วย encoding ต่างๆ (เพื่อแก้ปัญหาภาษาไทย)
+                for enc in ['utf-8', 'cp874', 'tis-620']:
+                    try:
+                        df = pd.read_csv(file_path, encoding=enc)
+                        loaded_file = file_path
+                        break
+                    except:
+                        continue
+            
+            # ถ้าลงท้ายด้วย .xlsx หรือ .XLSX
+            elif file_path.lower().endswith('.xlsx'):
+                df = pd.read_excel(file_path, engine='openpyxl')
+                loaded_file = file_path
+
+            # ถ้าอ่านสำเร็จ ให้หยุดวนลูป
+            if df is not None:
+                break
+                
+        except Exception as e:
+            error_log += f"Failed to load {file_path}: {e}\n"
+            continue
 
     if df is None:
-        return None, f"❌ อ่านไฟล์ไม่ได้ทั้งแบบ Excel และ CSV\nError Log:\n{error_log}"
+        return None, f"❌ พยายามอ่านไฟล์เหล่านี้แล้วแต่ไม่สำเร็จ:\n{possible_files}\n\nError Log:\n{error_log}"
 
-    # --- 3. Clean Data ---
+    # --- 3. Clean Data (จัดระเบียบข้อมูล) ---
     try:
-        # ลบช่องว่างชื่อ Column (เผื่อมีวรรคหน้าหลัง)
+        # ลบช่องว่างหัวท้ายชื่อ Column
         df.columns = df.columns.str.strip()
         
         # ตรวจสอบ Column สำคัญ
-        required = ['PERSONID', 'FNAME', 'NAME', 'AMOUNT', 'ITEMNAME']
-        missing = [c for c in required if c not in df.columns]
+        required_cols = ['PERSONID', 'FNAME', 'NAME', 'AMOUNT', 'ITEMNAME']
+        # เช็คว่ามี Column ครบไหม (แบบไม่สนตัวพิมพ์เล็กใหญ่)
+        lower_cols = [c.lower() for c in df.columns]
+        missing = [c for c in required_cols if c.lower() not in lower_cols]
+        
         if missing:
-            return None, f"❌ ไฟล์ขาด Column สำคัญ: {missing}\nColumn ที่เจอ: {list(df.columns)}"
-
-        # แปลงเบอร์โทรให้เป็นข้อความ (ตัดตัวอักษรแปลกปลอม)
-        df['PERSONID'] = df['PERSONID'].astype(str).str.replace(r'[^0-9]', '', regex=True)
+            # ถ้าไม่เจอ ลอง map ชื่อ column ให้ฉลาดขึ้น
+            # (เผื่อในไฟล์เขียน Person ID, First Name)
+            pass 
+        
+        # แปลงเบอร์โทรเป็นข้อความ
+        if 'PERSONID' in df.columns:
+            df['PERSONID'] = df['PERSONID'].astype(str).str.replace(r'[^0-9]', '', regex=True)
         
         # สร้างชื่อเต็ม
-        df['Fullname'] = df['FNAME'].fillna('') + ' ' + df['LNAME'].fillna('')
+        if 'FNAME' in df.columns:
+            df['Fullname'] = df['FNAME'].fillna('')
+            if 'LNAME' in df.columns:
+                df['Fullname'] += ' ' + df['LNAME'].fillna('')
         
-        # แปลงตัวเลข (ลบ comma ถ้ามี)
+        # แปลงตัวเลข
         for col in ['BASEQUANTITY', 'PRICE', 'AMOUNT']:
             if col in df.columns:
                 if df[col].dtype == 'object':
@@ -59,52 +85,62 @@ def load_data():
     except Exception as e:
         return None, f"❌ เกิดข้อผิดพลาดตอนแปลงข้อมูล: {e}"
 
-    return df, None
+    return df, f"✅ โหลดข้อมูลสำเร็จจากไฟล์: {loaded_file}"
 
-# --- เรียกใช้งาน ---
-df, error_msg = load_data()
+# --- เรียกใช้งานฟังก์ชัน ---
+df, status_msg = load_data()
 
-if error_msg:
-    st.error(error_msg)
+# แสดงสถานะการโหลด (ถ้า Error ให้หยุด)
+if df is None:
+    st.error(status_msg)
     st.stop()
+else:
+    # ซ่อนข้อความสำเร็จไว้ใน sidebar เพื่อไม่ให้รก
+    with st.sidebar:
+        st.success(status_msg)
 
 # ==========================================
-# ส่วนแสดงผล UI (Tailwind Design)
+# ส่วนแสดงผล UI
 # ==========================================
 
 st.markdown("""
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet"/>
 <style>
-    body { font-family: sans-serif; background-color: #f5f7f8; }
+    body { font-family: 'Sarabun', sans-serif; background-color: #f5f7f8; }
     .stApp { background-color: #f5f7f8; }
-    /* ซ่อน Header มาตรฐานของ Streamlit เพื่อความสวยงาม */
-    header {visibility: hidden;}
+    /* ปรับแต่ง Scrollbar */
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Sidebar ค้นหา ---
+# --- Sidebar ---
 with st.sidebar:
-    st.title("💊 Pharma Lookup")
-    search_query = st.text_input("ค้นหาลูกค้า", placeholder="พิมพ์ชื่อ หรือ เบอร์โทร...")
+    st.markdown("### 🔍 ค้นหาลูกค้า")
+    search_query = st.text_input("พิมพ์ชื่อ หรือ เบอร์โทร...", placeholder="เช่น 081... หรือ สมชาย")
     
     if 'selected_id' not in st.session_state:
         st.session_state['selected_id'] = None
 
     if search_query:
-        # กรองข้อมูล (รองรับ Partial Match)
-        mask = (
-            df['PERSONID'].str.contains(search_query, na=False) | 
-            df['FNAME'].str.contains(search_query, na=False) |
-            df['LNAME'].str.contains(search_query, na=False)
-        )
+        # กรองข้อมูล
+        mask = pd.Series(False, index=df.index)
+        if 'PERSONID' in df.columns:
+            mask |= df['PERSONID'].str.contains(search_query, na=False)
+        if 'FNAME' in df.columns:
+            mask |= df['FNAME'].str.contains(search_query, na=False)
+        if 'LNAME' in df.columns:
+            mask |= df['LNAME'].str.contains(search_query, na=False)
+            
         results = df[mask]
         
-        # ดึงรายชื่อที่ไม่ซ้ำ
+        # ดึงรายชื่อ
         unique_customers = results[['PERSONID', 'Fullname', 'NAME']].drop_duplicates().head(20)
         
         if not unique_customers.empty:
-            st.success(f"เจอ {len(unique_customers)} คน")
+            st.info(f"พบ {len(unique_customers)} รายชื่อ")
             for _, row in unique_customers.iterrows():
                 # ปุ่มเลือก
                 label = f"{row['Fullname']}\n({row['PERSONID']})"
@@ -113,8 +149,8 @@ with st.sidebar:
                     st.rerun()
         else:
             st.warning("ไม่พบข้อมูล")
-
-    if st.button("รีเซ็ต", type="secondary"):
+            
+    if st.button("ล้างการค้นหา", type="secondary"):
         st.session_state['selected_id'] = None
         st.rerun()
 
@@ -122,99 +158,83 @@ with st.sidebar:
 selected_id = st.session_state['selected_id']
 
 if selected_id:
-    # ดึงข้อมูลลูกค้าที่เลือก
+    # กรองข้อมูลลูกค้า
     customer_data = df[df['PERSONID'] == selected_id]
-    info = customer_data.iloc[0]
     
-    # คำนวณสถิติ
-    total_spend = customer_data['AMOUNT'].sum()
-    total_items = customer_data['BASEQUANTITY'].sum()
-    try:
-        top_cat = customer_data['CF_ITEMGROUPL1_GROUPNAME'].mode()[0]
-    except:
+    if not customer_data.empty:
+        info = customer_data.iloc[0]
+        
+        # คำนวณยอด
+        total_spend = customer_data['AMOUNT'].sum() if 'AMOUNT' in df.columns else 0
+        total_items = customer_data['BASEQUANTITY'].sum() if 'BASEQUANTITY' in df.columns else 0
+        
         top_cat = "-"
+        if 'CF_ITEMGROUPL1_GROUPNAME' in customer_data.columns:
+            try:
+                top_cat = customer_data['CF_ITEMGROUPL1_GROUPNAME'].mode()[0]
+            except:
+                pass
 
-    # สร้างตาราง HTML
-    rows_html = ""
-    for _, row in customer_data.iterrows():
-        cat_name = str(row.get('CF_ITEMGROUPL1_GROUPNAME', '-'))
-        rows_html += f"""
-        <tr style="border-bottom: 1px solid #e2e8f0; hover:background-color: #f8fafc;">
-            <td style="padding: 12px; color: #334155;">{row['ITEMNAME']}</td>
-            <td style="padding: 12px;">
-                <span style="background:#eff6ff; color:#1d4ed8; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;">
-                    {cat_name[:20]}
-                </span>
-            </td>
-            <td style="padding: 12px; text-align:right; color: #475569;">{int(row['BASEQUANTITY'])} {row['CF_UNITNAME']}</td>
-            <td style="padding: 12px; text-align:right; color: #475569;">{row['PRICE']:,.2f}</td>
-            <td style="padding: 12px; text-align:right; font-weight:bold; color: #0f172a;">{row['AMOUNT']:,.2f}</td>
-        </tr>
-        """
+        # สร้างตาราง HTML
+        rows_html = ""
+        for _, row in customer_data.iterrows():
+            item_name = row.get('ITEMNAME', '-')
+            cat_name = str(row.get('CF_ITEMGROUPL1_GROUPNAME', '-'))[:20]
+            qty = row.get('BASEQUANTITY', 0)
+            unit = row.get('CF_UNITNAME', '')
+            price = row.get('PRICE', 0)
+            amount = row.get('AMOUNT', 0)
+            
+            rows_html += f"""
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 12px; color: #334155;">{item_name}</td>
+                <td style="padding: 12px;">
+                    <span style="background:#eff6ff; color:#1d4ed8; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;">
+                        {cat_name}
+                    </span>
+                </td>
+                <td style="padding: 12px; text-align:right; color: #475569;">{int(qty)} {unit}</td>
+                <td style="padding: 12px; text-align:right; color: #475569;">{price:,.2f}</td>
+                <td style="padding: 12px; text-align:right; font-weight:bold; color: #0f172a;">{amount:,.2f}</td>
+            </tr>
+            """
 
-    # แสดงผลหน้าจอ
-    st.markdown(f"""
-    <div style="max-width: 1000px; margin: 0 auto;">
-        <div style="background:white; padding:24px; border-radius:16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px;">
-            <div style="display:flex; justify-content:space-between; align-items:start;">
-                <div>
-                    <h1 style="font-size: 28px; font-weight: 800; color: #1e293b; margin-bottom: 4px;">{info['Fullname']}</h1>
-                    <div style="display:flex; gap:12px; color: #64748b; font-size: 14px;">
-                        <span style="display:flex; align-items:center; gap:4px;"><span class="material-icons-outlined" style="font-size:16px;">phone</span> {info['PERSONID']}</span>
-                        <span style="display:flex; align-items:center; gap:4px;"><span class="material-icons-outlined" style="font-size:16px;">store</span> {info['NAME']}</span>
+        # แสดงผล UI
+        st.markdown(f"""
+        <div style="max-width: 1000px; margin: 0 auto; padding-top: 20px;">
+            <div style="background:white; padding:24px; border-radius:16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin-bottom: 20px;">
+                <div style="display:flex; justify-content:space-between; align-items:start;">
+                    <div>
+                        <h1 style="font-size: 28px; font-weight: 800; color: #1e293b; margin-bottom: 4px;">{info.get('Fullname', 'Unknown')}</h1>
+                        <div style="display:flex; gap:12px; color: #64748b; font-size: 14px;">
+                            <span style="display:flex; align-items:center; gap:4px;"><span class="material-icons-outlined" style="font-size:16px;">phone</span> {info.get('PERSONID', '-')}</span>
+                            <span style="display:flex; align-items:center; gap:4px;"><span class="material-icons-outlined" style="font-size:16px;">store</span> {info.get('NAME', '-')}</span>
+                        </div>
+                    </div>
+                    <div>
+                        <span style="background:#d1fae5; color:#047857; padding:4px 12px; border-radius:99px; font-size:12px; font-weight:bold;">Active</span>
                     </div>
                 </div>
-                <div style="text-align:right;">
-                    <span style="background:#d1fae5; color:#047857; padding:4px 12px; border-radius:99px; font-size:12px; font-weight:bold;">Active Customer</span>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 24px;">
+                    <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
+                        <p style="font-size:12px; color:#64748b; font-weight:600; text-transform:uppercase;">ยอดซื้อรวม (Total Spend)</p>
+                        <p style="font-size:24px; font-weight:800; color:#0f172a;">฿{total_spend:,.2f}</p>
+                    </div>
+                    <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
+                        <p style="font-size:12px; color:#64748b; font-weight:600; text-transform:uppercase;">จำนวนรายการ (Items)</p>
+                        <p style="font-size:24px; font-weight:800; color:#0f172a;">{int(total_items):,}</p>
+                    </div>
+                    <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
+                        <p style="font-size:12px; color:#64748b; font-weight:600; text-transform:uppercase;">กลุ่มสินค้าหลัก</p>
+                        <p style="font-size:18px; font-weight:800; color:#0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{top_cat}</p>
+                    </div>
                 </div>
             </div>
 
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 24px;">
-                <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
-                    <p style="font-size:12px; color:#64748b; font-weight:600; text-transform:uppercase;">ยอดซื้อรวม (Total)</p>
-                    <p style="font-size:24px; font-weight:800; color:#0f172a;">฿{total_spend:,.2f}</p>
-                </div>
-                <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
-                    <p style="font-size:12px; color:#64748b; font-weight:600; text-transform:uppercase;">จำนวนรายการ</p>
-                    <p style="font-size:24px; font-weight:800; color:#0f172a;">{int(total_items):,}</p>
-                </div>
-                <div style="background:#f8fafc; padding:16px; border-radius:12px; border:1px solid #e2e8f0;">
-                    <p style="font-size:12px; color:#64748b; font-weight:600; text-transform:uppercase;">กลุ่มสินค้าหลัก</p>
-                    <p style="font-size:18px; font-weight:800; color:#0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{top_cat}</p>
-                </div>
-            </div>
-        </div>
-
-        <div style="background:white; padding:24px; border-radius:16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
-            <h3 style="font-size:18px; font-weight:bold; color:#1e293b; margin-bottom:16px; border-bottom:1px solid #e2e8f0; padding-bottom:12px;">
-                ประวัติการสั่งซื้อ (Order History)
-            </h3>
-            <div style="overflow-x:auto;">
-                <table style="width:100%; border-collapse: collapse; font-size:14px;">
-                    <thead style="background:#f8fafc; border-bottom: 2px solid #e2e8f0;">
-                        <tr>
-                            <th style="padding:12px; text-align:left; color:#64748b; font-weight:600;">สินค้า</th>
-                            <th style="padding:12px; text-align:left; color:#64748b; font-weight:600;">หมวดหมู่</th>
-                            <th style="padding:12px; text-align:right; color:#64748b; font-weight:600;">จำนวน</th>
-                            <th style="padding:12px; text-align:right; color:#64748b; font-weight:600;">ราคา/หน่วย</th>
-                            <th style="padding:12px; text-align:right; color:#64748b; font-weight:600;">รวม</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows_html}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-else:
-    # หน้าจอตอนยังไม่เลือกใคร
-    st.markdown("""
-    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:60vh; color:#94a3b8;">
-        <span class="material-icons-outlined" style="font-size:64px; margin-bottom:16px; color:#cbd5e1;">search</span>
-        <h3 style="font-size:20px; font-weight:600; color:#64748b;">เริ่มใช้งานโดยการค้นหาลูกค้า</h3>
-        <p style="font-size:14px;">พิมพ์ชื่อหรือเบอร์โทรที่แถบเมนูด้านซ้าย</p>
-    </div>
-    """, unsafe_allow_html=True)
+            <div style="background:white; padding:24px; border-radius:16px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                <h3 style="font-size:18px; font-weight:bold; color:#1e293b; margin-bottom:16px; border-bottom:1px solid #e2e8f0; padding-bottom:12px;">
+                    รายการสินค้าที่สั่งซื้อ (Order History)
+                </h3>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%; border-collapse: collapse;
