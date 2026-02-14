@@ -9,7 +9,53 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 2. ฟังก์ชันโหลดข้อมูล ---
+# ==========================================
+# 🔐 ส่วนจัดการระบบ Login
+# ==========================================
+
+VALID_PASSWORDS = ["wrd022026", "onn022026"]
+
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+
+def check_login():
+    input_pass = st.session_state.get("password_input", "")
+    if input_pass in VALID_PASSWORDS:
+        st.session_state['logged_in'] = True
+        st.session_state["password_input"] = ""
+    else:
+        st.error("❌ รหัสผ่านไม่ถูกต้อง")
+
+if not st.session_state['logged_in']:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div style="background-color: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center;">
+                <h1 style="color: #0ea5e9;">💊 PharmaSales</h1>
+                <p style="color: gray;">กรุณากรอกรหัสผ่านเพื่อเข้าใช้งาน</p>
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        with st.form("login_form"):
+            st.text_input("Password", type="password", key="password_input")
+            submit = st.form_submit_button("เข้าสู่ระบบ", use_container_width=True, type="primary")
+            
+            if submit:
+                check_login()
+                if st.session_state['logged_in']:
+                    st.rerun()
+    st.stop()
+
+# ==========================================
+# 📊 ส่วนโปรแกรมหลัก (Dashboard)
+# ==========================================
+
+# --- ฟังก์ชันโหลดข้อมูล ---
 @st.cache_data
 def load_data():
     files = glob.glob("*.xlsx") + glob.glob("*.XLSX") + glob.glob("*.csv")
@@ -53,7 +99,7 @@ def load_data():
 
 df, col_map, filename = load_data()
 
-# --- 3. Sidebar ---
+# --- Sidebar ---
 with st.sidebar:
     st.title("💊 Pharma Lookup")
     st.caption(f"File: {filename}")
@@ -75,19 +121,30 @@ with st.sidebar:
         else:
             st.warning("ไม่พบข้อมูล")
 
-# --- 4. Main Content ---
+    st.markdown("---")
+    if st.button("🔒 ออกจากระบบ (Logout)"):
+        st.session_state['logged_in'] = False
+        st.rerun()
+
+# --- Main Content ---
 
 if selected_customer_id and df is not None:
     cust_df = df[df['Search_ID'] == selected_customer_id]
     info = cust_df.iloc[0]
     
+    # 1. คำนวณยอด
     total_spend = cust_df[col_map['AMOUNT']].sum()
     total_items = cust_df[col_map['QTY']].sum()
     top_cat = cust_df[col_map['GROUP']].mode()[0] if col_map['GROUP'] in cust_df else "-"
-    branch = info[col_map['BRANCH']]
+    
+    # 2. หาข้อมูลสาขา (แก้ไขใหม่: ดึงทุกสาขาที่ไม่ซ้ำ)
+    unique_branches = cust_df[col_map['BRANCH']].unique()
+    # แปลงเป็น string คั่นด้วยลูกน้ำ (ตัดค่าว่างทิ้ง)
+    branch_display = ", ".join([str(b) for b in unique_branches if pd.notna(b)])
 
+    # 3. แสดงผล Header
     st.title(info['Search_Name'])
-    st.markdown(f"**สมาชิก:** `{selected_customer_id}`  |  **สาขา:** `{branch}`")
+    st.markdown(f"**สมาชิก:** `{selected_customer_id}`  |  **สาขา:** `{branch_display}`")
     
     m1, m2, m3 = st.columns(3)
     m1.metric("💰 ยอดซื้อรวม", f"฿{total_spend:,.0f}")
@@ -99,7 +156,7 @@ if selected_customer_id and df is not None:
     
     tab1, tab2 = st.tabs(["📊 สรุปรายการยอดนิยม (Grouped)", "📝 ประวัติละเอียด (All Logs)"])
 
-    # --- Tab 1: แบบสรุป (แก้ไขลำดับ Column) ---
+    # --- Tab 1: แบบสรุป ---
     with tab1:
         # Group รวมยอด
         summary_df = cust_df.groupby(
@@ -110,15 +167,14 @@ if selected_customer_id and df is not None:
             Avg_Price=(col_map['PRICE'], 'mean')
         ).reset_index()
         
-        # เรียงตามยอดเงิน
         summary_df = summary_df.sort_values(by='Total_Amount', ascending=False)
         
-        # จัดลำดับ Column ใหม่: SKU / สินค้า / จำนวนรวม / หน่วย / ยอดเงินรวม / ราคาเฉลี่ย / หมวดหมู่
+        # จัดลำดับ Column (SKU, สินค้า, จำนวน, หน่วย, ยอดเงิน, เฉลี่ย, หมวด)
         summary_df = summary_df[[
             col_map['SKU'], 
             col_map['ITEM'], 
-            'Total_Qty',    # <--- สลับมาไว้ตรงนี้
-            col_map['UNIT'], # <--- ย้ายหน่วยไปไว้หลังจำนวน
+            'Total_Qty',    
+            col_map['UNIT'], 
             'Total_Amount', 
             'Avg_Price', 
             col_map['GROUP']
